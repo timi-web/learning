@@ -1,0 +1,761 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// AUTHENTICATION
+// ============================================
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  name               String
+  passwordHash       String?
+  emailVerified      DateTime?
+  image              String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organisations       OrganisationUser[]
+  sessions            Session[]
+  accounts            Account[]
+  activities          ActivityLog[]
+  uploadedDocs        Document[]   @relation("UploadedDocuments")
+  submittedEvidence   Evidence[]   @relation("SubmittedEvidence")
+  assignedObligations Obligation[] @relation("AssignedObligations")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ============================================
+// ORGANISATION & USERS
+// ============================================
+
+model Organisation {
+  id             String   @id @default(cuid())
+  name           String
+  abn            String?  @unique
+  acn            String?
+  abnVerified    Boolean  @default(false)
+  abnVerifiedAt  DateTime?
+
+  email       String
+  phone       String?
+  address     Json?
+
+  description String? @db.Text
+  website     String?
+  logoUrl     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users              OrganisationUser[]
+  documents          Document[]
+  insurances         Insurance[]
+  certifications     Certification[]
+  bankGuarantees     BankGuarantee[]
+  projectParties     ProjectParty[]
+  reputationScores   ReputationScore[]
+  sentComms          Communication[] @relation("SentCommunications")
+  receivedComms      Communication[] @relation("ReceivedCommunications")
+  obligorObligations Obligation[]    @relation("ObligorObligations")
+  obligeeObligations Obligation[]    @relation("ObligeeObligations")
+  requestedVariations Variation[]    @relation("RequestedVariations")
+}
+
+model OrganisationUser {
+  id             String  @id @default(cuid())
+  organisationId String
+  userId         String
+  role           OrgRole @default(MEMBER)
+  title          String?
+
+  joinedAt DateTime @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organisationId, userId])
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+// ============================================
+// VERIFICATION & CREDENTIALS
+// ============================================
+
+model Insurance {
+  id             String        @id @default(cuid())
+  organisationId String
+
+  type           InsuranceType
+  provider       String
+  policyNumber   String
+  coverageAmount Decimal       @db.Decimal(15, 2)
+  currency       String        @default("AUD")
+
+  startDate  DateTime
+  expiryDate DateTime
+
+  documentId String?
+  verified   Boolean   @default(false)
+  verifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  document     Document?    @relation(fields: [documentId], references: [id])
+}
+
+enum InsuranceType {
+  PUBLIC_LIABILITY
+  PROFESSIONAL_INDEMNITY
+  WORKERS_COMPENSATION
+  PRODUCT_LIABILITY
+  CONSTRUCTION_ALL_RISK
+  OTHER
+}
+
+model Certification {
+  id             String @id @default(cuid())
+  organisationId String
+
+  type              String
+  name              String
+  issuingBody       String
+  certificateNumber String?
+
+  issueDate  DateTime
+  expiryDate DateTime?
+
+  documentId String?
+  verified   Boolean   @default(false)
+  verifiedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  document     Document?    @relation(fields: [documentId], references: [id])
+}
+
+model BankGuarantee {
+  id             String @id @default(cuid())
+  organisationId String
+  projectId      String?
+
+  type            GuaranteeType
+  bank            String
+  guaranteeNumber String
+  amount          Decimal @db.Decimal(15, 2)
+  currency        String  @default("AUD")
+  beneficiary     String
+
+  issueDate  DateTime
+  expiryDate DateTime
+
+  documentId String?
+  status     GuaranteeStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+  project      Project?     @relation(fields: [projectId], references: [id])
+  document     Document?    @relation(fields: [documentId], references: [id])
+}
+
+enum GuaranteeType {
+  PERFORMANCE_BOND
+  ADVANCE_PAYMENT
+  RETENTION
+  BID_BOND
+  OTHER
+}
+
+enum GuaranteeStatus {
+  ACTIVE
+  RELEASED
+  CALLED
+  EXPIRED
+}
+
+// ============================================
+// PROJECTS & CONTRACTS
+// ============================================
+
+model Project {
+  id          String  @id @default(cuid())
+  code        String  @unique
+  name        String
+  description String? @db.Text
+
+  contractValue Decimal? @db.Decimal(15, 2)
+  currency      String   @default("AUD")
+  contractType  String?
+
+  startDate      DateTime?
+  plannedEndDate DateTime?
+  actualEndDate  DateTime?
+
+  status          ProjectStatus @default(DRAFT)
+  baselineLocked  Boolean       @default(false)
+  baselineLockedAt DateTime?
+  baselineHash    String?
+
+  chainId        Int?
+  baselineTxHash String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parties        ProjectParty[]
+  contracts      Contract[]
+  obligations    Obligation[]
+  milestones     Milestone[]
+  variations     Variation[]
+  communications Communication[]
+  events         ProjectEvent[]
+  documents      Document[]
+  bankGuarantees BankGuarantee[]
+}
+
+enum ProjectStatus {
+  DRAFT
+  BASELINE_REVIEW
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  TERMINATED
+}
+
+model ProjectParty {
+  id             String @id @default(cuid())
+  projectId      String
+  organisationId String
+
+  role        PartyRole
+  isPrincipal Boolean   @default(false)
+
+  joinedAt DateTime  @default(now())
+  leftAt   DateTime?
+
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, organisationId])
+}
+
+enum PartyRole {
+  OWNER
+  CONTRACTOR
+  SUBCONTRACTOR
+  CONSULTANT
+  SUPPLIER
+  OTHER
+}
+
+model Contract {
+  id        String @id @default(cuid())
+  projectId String
+
+  name       String
+  documentId String
+  version    Int    @default(1)
+
+  parseStatus  ParseStatus @default(PENDING)
+  parsedAt     DateTime?
+  parseResult  Json?
+
+  reviewStatus ReviewStatus @default(PENDING)
+  reviewedBy   String?
+  reviewedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  document    Document    @relation(fields: [documentId], references: [id])
+  obligations Obligation[]
+}
+
+enum ParseStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ReviewStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+}
+
+// ============================================
+// OBLIGATIONS & MILESTONES
+// ============================================
+
+model Obligation {
+  id          String  @id @default(cuid())
+  projectId   String
+  contractId  String?
+  milestoneId String?
+
+  clauseReference String?
+  title           String
+  description     String @db.Text
+
+  obligorId  String
+  obligeeId  String
+  assigneeId String?
+
+  triggerType   TriggerType
+  triggerDate   DateTime?
+  triggerEvent  String?
+  triggerOffset Int?
+  dueDate       DateTime?
+
+  status      ObligationStatus @default(NOT_STARTED)
+  completedAt DateTime?
+
+  evidenceRequired String? @db.Text
+  penaltyClause    String? @db.Text
+  penaltyAmount    Decimal? @db.Decimal(15, 2)
+
+  priority Priority @default(MEDIUM)
+  category String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  contract  Contract?    @relation(fields: [contractId], references: [id])
+  milestone Milestone?   @relation(fields: [milestoneId], references: [id])
+  obligor   Organisation @relation("ObligorObligations", fields: [obligorId], references: [id])
+  obligee   Organisation @relation("ObligeeObligations", fields: [obligeeId], references: [id])
+  assignee  User?        @relation("AssignedObligations", fields: [assigneeId], references: [id])
+  evidence  Evidence[]
+  events    ObligationEvent[]
+}
+
+enum TriggerType {
+  FIXED_DATE
+  PROJECT_START
+  EVENT
+  MILESTONE
+  RECURRING
+}
+
+enum ObligationStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  SUBMITTED
+  APPROVED
+  REJECTED
+  OVERDUE
+  BREACHED
+  WAIVED
+}
+
+enum Priority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+model Milestone {
+  id        String @id @default(cuid())
+  projectId String
+
+  name           String
+  description    String? @db.Text
+  sequenceNumber Int
+
+  plannedDate DateTime
+  actualDate  DateTime?
+
+  paymentLinked  Boolean  @default(false)
+  paymentAmount  Decimal? @db.Decimal(15, 2)
+  paymentPercent Decimal? @db.Decimal(5, 2)
+
+  status MilestoneStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  obligations Obligation[]
+}
+
+enum MilestoneStatus {
+  PENDING
+  IN_PROGRESS
+  SUBMITTED
+  APPROVED
+  REJECTED
+  OVERDUE
+}
+
+// ============================================
+// EVIDENCE & DOCUMENTS
+// ============================================
+
+model Document {
+  id             String  @id @default(cuid())
+  organisationId String?
+  projectId      String?
+
+  filename     String
+  originalName String
+  mimeType     String
+  size         Int
+
+  storageKey String
+  storageUrl String?
+
+  sha256Hash   String
+  hashAnchored Boolean @default(false)
+  anchorTxHash String?
+
+  category    DocumentCategory
+  description String?
+  version     Int    @default(1)
+  parentId    String?
+
+  uploadedBy String
+  createdAt  DateTime @default(now())
+
+  organisation   Organisation?   @relation(fields: [organisationId], references: [id])
+  project        Project?        @relation(fields: [projectId], references: [id])
+  uploader       User            @relation("UploadedDocuments", fields: [uploadedBy], references: [id])
+  contracts      Contract[]
+  evidence       Evidence[]
+  insurances     Insurance[]
+  certifications Certification[]
+  bankGuarantees BankGuarantee[]
+  commAttachments Communication[] @relation("CommunicationAttachments")
+  varAttachments  Variation[]     @relation("VariationAttachments")
+}
+
+enum DocumentCategory {
+  CONTRACT
+  INSURANCE
+  CERTIFICATION
+  BANK_GUARANTEE
+  EVIDENCE
+  CORRESPONDENCE
+  REPORT
+  DRAWING
+  SPECIFICATION
+  OTHER
+}
+
+model Evidence {
+  id           String @id @default(cuid())
+  obligationId String
+
+  description String
+  documentId  String?
+
+  submittedBy String
+  submittedAt DateTime @default(now())
+
+  status      EvidenceStatus @default(PENDING)
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  reviewNotes String? @db.Text
+
+  obligation Obligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+  document   Document?  @relation(fields: [documentId], references: [id])
+  submitter  User       @relation("SubmittedEvidence", fields: [submittedBy], references: [id])
+}
+
+enum EvidenceStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ============================================
+// COMMUNICATIONS
+// ============================================
+
+model Communication {
+  id        String @id @default(cuid())
+  projectId String
+
+  channel ChannelType
+
+  referenceNumber String?
+  subject         String
+  body            String @db.Text
+
+  fromOrgId  String
+  toOrgId    String
+  fromUserId String
+
+  noticeType       NoticeType?
+  requiresResponse Boolean  @default(false)
+  responseDueDays  Int?
+  responseDueDate  DateTime?
+
+  acknowledgedAt DateTime?
+  acknowledgedBy String?
+
+  contentHash  String?
+  anchorTxHash String?
+
+  createdAt DateTime @default(now())
+
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fromOrg     Organisation @relation("SentCommunications", fields: [fromOrgId], references: [id])
+  toOrg       Organisation @relation("ReceivedCommunications", fields: [toOrgId], references: [id])
+  fromUser    User         @relation(fields: [fromUserId], references: [id])
+  attachments Document[]   @relation("CommunicationAttachments")
+
+  parentId String?
+  parent   Communication?  @relation("CommunicationThread", fields: [parentId], references: [id])
+  replies  Communication[] @relation("CommunicationThread")
+}
+
+enum ChannelType {
+  C1_INFORMAL
+  C2_FORMAL
+}
+
+enum NoticeType {
+  INSTRUCTION
+  CLAIM
+  VARIATION_REQUEST
+  EXTENSION_OF_TIME
+  DELAY_NOTICE
+  DEFECT_NOTICE
+  PAYMENT_CERTIFICATE
+  COMPLETION_CERTIFICATE
+  DISPUTE_NOTICE
+  GENERAL
+}
+
+// ============================================
+// VARIATIONS
+// ============================================
+
+model Variation {
+  id        String @id @default(cuid())
+  projectId String
+
+  referenceNumber String
+  title           String
+  description     String @db.Text
+
+  requestedBy     String
+  requestedByUser String
+  requestedAt     DateTime @default(now())
+
+  costImpact       Decimal? @db.Decimal(15, 2)
+  timeImpact       Int?
+  scopeDescription String? @db.Text
+
+  status VariationStatus @default(DRAFT)
+
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectedBy      String?
+  rejectedAt      DateTime?
+  rejectionReason String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project      Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  requestedOrg Organisation @relation("RequestedVariations", fields: [requestedBy], references: [id])
+  documents    Document[]   @relation("VariationAttachments")
+}
+
+enum VariationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+// ============================================
+// EVENTS & AUDIT TRAIL
+// ============================================
+
+model ProjectEvent {
+  id        String @id @default(cuid())
+  projectId String
+
+  eventType  EventType
+  entityType String
+  entityId   String
+
+  actorOrgId  String
+  actorUserId String
+
+  payload     Json
+  payloadHash String
+
+  anchored     Boolean   @default(false)
+  anchorTxHash String?
+  anchoredAt   DateTime?
+  merkleRoot   String?
+  merkleProof  Json?
+
+  occurredAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, eventType])
+  @@index([entityType, entityId])
+  @@index([anchored, occurredAt])
+}
+
+enum EventType {
+  PROJECT_CREATED
+  BASELINE_LOCKED
+  PROJECT_ACTIVATED
+  PROJECT_COMPLETED
+  OBLIGATION_CREATED
+  OBLIGATION_ASSIGNED
+  OBLIGATION_STARTED
+  OBLIGATION_SUBMITTED
+  OBLIGATION_APPROVED
+  OBLIGATION_REJECTED
+  OBLIGATION_OVERDUE
+  OBLIGATION_BREACHED
+  MILESTONE_SUBMITTED
+  MILESTONE_APPROVED
+  MILESTONE_REJECTED
+  NOTICE_ISSUED
+  NOTICE_ACKNOWLEDGED
+  VARIATION_SUBMITTED
+  VARIATION_APPROVED
+  VARIATION_REJECTED
+  PAYMENT_TRIGGERED
+  PAYMENT_CONFIRMED
+  DISPUTE_RAISED
+  DISPUTE_RESOLVED
+}
+
+model ObligationEvent {
+  id           String @id @default(cuid())
+  obligationId String
+
+  eventType   String
+  description String
+  fromStatus  ObligationStatus?
+  toStatus    ObligationStatus?
+
+  actorUserId String
+  occurredAt  DateTime @default(now())
+
+  obligation Obligation @relation(fields: [obligationId], references: [id], onDelete: Cascade)
+}
+
+model ReputationScore {
+  id             String @id @default(cuid())
+  organisationId String
+
+  projectsCompleted   Int      @default(0)
+  obligationsMet      Int      @default(0)
+  obligationsBreached Int      @default(0)
+  onTimeDeliveryRate  Decimal? @db.Decimal(5, 2)
+  avgResponseTime     Int?
+  disputesRaised      Int      @default(0)
+  disputesLost        Int      @default(0)
+
+  overallScore Decimal? @db.Decimal(3, 2)
+
+  calculatedAt DateTime @default(now())
+
+  organisation Organisation @relation(fields: [organisationId], references: [id], onDelete: Cascade)
+}
+
+model ActivityLog {
+  id     String @id @default(cuid())
+  userId String
+
+  action      String
+  entityType  String
+  entityId    String?
+  description String
+  metadata    Json?
+  ipAddress   String?
+  userAgent   String?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model Notification {
+  id     String @id @default(cuid())
+  userId String
+
+  type    String
+  title   String
+  message String
+  link    String?
+
+  read   Boolean @default(false)
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, read, createdAt])
+}
